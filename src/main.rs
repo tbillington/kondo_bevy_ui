@@ -151,6 +151,7 @@ fn spawn_project_list(
                 // overflow: Overflow::scroll_y(),
                 // height: Val::Percent(100.),
                 width: Val::Percent(100.),
+                min_height: Val::Px(0.),
                 // flex_shrink: 0.,
                 ..default()
             },
