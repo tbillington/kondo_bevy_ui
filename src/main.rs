@@ -241,14 +241,17 @@ fn select_project_update(
             width: Val::Percent(100.),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(8.),
+            padding: UiRect::horizontal(Val::Px(16.)),
             ..default()
         },
+        font(16.),
         Children::spawn((
             Spawn((
                 Node {
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
+                font(20.),
                 Children::spawn_one((Text::new(display_name), ThemedText)),
             )),
             Spawn((Text::new(ple.kproj.path.to_string_lossy()), ThemedText)),
@@ -277,10 +280,15 @@ fn select_project_update(
                         ..default()
                     },
                     Children::spawn_one((
+                        font(14.),
                         Text::new(format!(
-                            "{} {} {}",
+                            "{}{}{}",
                             name,
-                            if artifacts { "🗑️" } else { "" },
+                            if artifacts {
+                                " (Artifact) " /* 🗑️ */
+                            } else {
+                                " "
+                            },
                             kondo_lib::pretty_size(size)
                         )),
                         ThemedText,
@@ -294,10 +302,19 @@ fn select_project_update(
                     ..default()
                 },
                 (),
-                Spawn((Text::new("Delete Artifacts"), ThemedText)),
+                Spawn((font(16.), Text::new("Delete Artifacts"), ThemedText)),
             )),
         )),
     ));
+}
+
+fn font(size: f32) -> bevy::feathers::font_styles::InheritableFont {
+    bevy::feathers::font_styles::InheritableFont {
+        font: bevy::feathers::handle_or_path::HandleOrPath::Path(
+            bevy::feathers::constants::fonts::REGULAR.to_owned(),
+        ),
+        font_size: size,
+    }
 }
 
 fn update_project_list_ui(
@@ -362,27 +379,21 @@ fn process_new_projects(tc: NonSend<BackgroundThreadCommunication>, mut pl: ResM
     }
 }
 
+fn primary_sys(_: In<Activate>, tc: NonSend<BackgroundThreadCommunication>) {
+    use rfd::FileDialog;
+
+    let directories = FileDialog::new().pick_folders();
+
+    let send = tc.send.clone();
+
+    std::thread::spawn(move || {
+        for dir in collect_dirs(&directories) {
+            send.send(dir).unwrap();
+        }
+    });
+}
+
 fn spawn_root(c: &mut Commands) -> impl Bundle {
-    let primary_sys = |_: In<Activate>, tc: NonSend<BackgroundThreadCommunication>| {
-        use rfd::FileDialog;
-
-        let directories = FileDialog::new().pick_folders();
-
-        println!("Picked dirs: {:?}", directories);
-
-        // scan_dirs(directories);
-
-        let send = tc.send.clone();
-
-        std::thread::spawn(move || {
-            for dir in collect_dirs(&directories) {
-                send.send(dir).unwrap();
-            }
-        });
-
-        // c.insert_resource(ProjectList());
-    };
-
     (
         RootUITag,
         Node {
@@ -532,7 +543,11 @@ fn build_project_list_entry(
                 ..default()
             },
             ple,
-            Spawn((Text::new(text), ThemedText)),
+            Spawn((
+                Text::new(text),
+                TextLayout::new_with_linebreak(LineBreak::WordOrCharacter),
+                ThemedText,
+            )),
             // Spawn((
             //     Node {
             //         width: Val::Percent(100.),
@@ -562,10 +577,10 @@ pub fn button_left<
 ) -> impl Bundle {
     (
         Node {
-            height: bevy::feathers::constants::size::ROW_HEIGHT,
+            // height: bevy::feathers::constants::size::ROW_HEIGHT,
             justify_content: JustifyContent::Start,
             align_items: AlignItems::Center,
-            padding: UiRect::axes(Val::Px(8.0), Val::Px(8.)),
+            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.)),
             flex_grow: 1.0,
             ..Default::default()
         },

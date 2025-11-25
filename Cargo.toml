@@ -32,7 +32,7 @@ kondo-lib = "0.8.0"
 rfd = "0.15.4"
 
 [profile.dev]
-debug = false
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 2
