@@ -4,29 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-
-# bevy = "=0.17.0-rc.2"
-# bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", default-features = false, features = [
-bevy = { version = "=0.17.0-rc.2", default-features = true, features = [
-  # "bevy_color",
-  # "bevy_core_pipeline",
-  # "bevy_core_widgets",
-  # "bevy_input_focus",
-  # "bevy_picking",
-  # "bevy_render",
-  # "bevy_text",
-  # "bevy_ui",
-  # "bevy_ui_picking_backend",
-  # "bevy_ui_render",
-  # "bevy_window",
-  # "bevy_winit",
-  # "default_font",
-  # "std",
-  "bevy_dev_tools",
-  "bevy_ui_debug",
+bevy = { version = "0.17", features = [
   "experimental_bevy_feathers",
   "experimental_bevy_ui_widgets",
-  # "hotpatching",
 ] }
 kondo-lib = "0.8.0"
 rfd = "0.15.4"
@@ -44,6 +24,11 @@ codegen-units = 1
 [profile.release.build-override]
 opt-level = 2
 codegen-units = 1
+
+[profile.release]
+codegen-units = 1
+lto = true
+debug = "line-tables-only"
 
 [lints.clippy]
 type-complexity = "allow"
