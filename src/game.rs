@@ -1,4 +1,7 @@
-use std::sync::mpsc::{Receiver, Sender};
+use std::{
+    path::PathBuf,
+    sync::mpsc::{Receiver, Sender},
+};
 
 use bevy::{
     ecs::system::RunSystemOnce,
@@ -14,6 +17,7 @@ use bevy::{
         tab_navigation::{TabGroup, TabNavigationPlugin},
     },
     prelude::*,
+    tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
     ui_widgets::{Activate, UiWidgetsPlugins, observe},
 };
 
@@ -35,6 +39,12 @@ pub(super) fn game_plugin(app: &mut App) {
         FeathersPlugin,
     ));
 
+    // {
+    //     use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
+    //     app.add_plugins(EguiPlugin::default());
+    //     app.add_plugins(WorldInspectorPlugin::new());
+    // }
+
     app.insert_resource(UiTheme(create_dark_theme()));
 
     // app.insert_resource(bevy::winit::WinitSettings::desktop_app());
@@ -50,6 +60,7 @@ pub(super) fn game_plugin(app: &mut App) {
             process_new_projects,
             update_project_list_ui,
             select_project_update,
+            handle_clean_tasks,
         )
             .chain(),
     );
@@ -63,8 +74,30 @@ pub(super) fn game_plugin(app: &mut App) {
     app.insert_non_send_resource(BackgroundThreadCommunication::default());
 }
 
+#[derive(Component)]
+struct CleanTask(Task<PathBuf>);
+
+fn handle_clean_tasks(
+    mut clean_tasks: Query<(Entity, &mut CleanTask)>,
+    mut pl: ResMut<ProjectList>,
+    mut c: Commands,
+) {
+    for (e, mut task) in &mut clean_tasks {
+        if let Some(mut path) = check_ready(&mut task.0) {
+            let proj = pl.0.iter_mut().find(|p| p.kproj.path == path);
+
+            if let Some(proj) = proj {
+                // println!("Clean artifacts");
+                proj.status = ProjectListEntryStatus::Cleaned;
+            }
+
+            c.entity(e).despawn();
+        }
+    }
+}
+
 enum BackgroundThreadMsg {
-    ScanningStarted,
+    ScanningStarted(Vec<PathBuf>),
     PLE(ProjectListEntry),
     #[expect(unused)]
     ScanningFinished,
@@ -130,15 +163,40 @@ fn spawn_project_list(
         ))
         .id();
 
+    let left_side = c
+        .spawn((
+            LeftSideTag,
+            ChildOf(central_area_ui),
+            Node {
+                flex_direction: FlexDirection::Column,
+                width: Val::Percent(50.),
+                ..default()
+            },
+        ))
+        .id();
+
+    c.spawn((
+        ScanningDirsListTag,
+        ChildOf(left_side),
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(8.),
+            padding: Val::Px(8.).into(),
+            // overflow: Overflow::scroll_y(),
+            width: Val::Percent(100.),
+            ..default()
+        },
+    ));
+
     c.spawn((
         ProjectListTag,
-        ChildOf(central_area_ui),
+        ChildOf(left_side),
         Node {
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(8.),
             padding: Val::Px(8.).into(),
             overflow: Overflow::scroll_y(),
-            width: Val::Percent(50.),
+            width: Val::Percent(100.),
             // height: Val::Percent(100.),
             // flex_shrink: 0.,
             ..default()
@@ -196,6 +254,8 @@ fn select_project_update(
         return;
     };
 
+    let path = ple.kproj.path.clone();
+
     let display_name = project_file_name(&ple.kproj);
 
     let mut dir_sizes = ple.kproj.size_dirs(SCAN_OPTIONS);
@@ -242,28 +302,32 @@ fn select_project_update(
                 )),
                 ThemedText,
             )),
-            SpawnIter(dir_sizes.dirs.into_iter().map(|(name, size, artifacts)| {
-                (
-                    Node {
-                        padding: UiRect::left(Val::Px(32.0)),
-                        ..default()
+            Spawn((
+                Node {
+                    padding: UiRect::left(Val::Px(32.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.),
+                    ..default()
+                },
+                ThemedText,
+                Children::spawn(SpawnIter(dir_sizes.dirs.into_iter().map(
+                    |(name, size, artifacts)| {
+                        (
+                            Text::new(format!(
+                                "{}{}{}",
+                                name,
+                                if artifacts {
+                                    " (Artifact) " /* 🗑️ */
+                                } else {
+                                    " "
+                                },
+                                kondo_lib::pretty_size(size)
+                            )),
+                            ThemedText,
+                        )
                     },
-                    Children::spawn_one((
-                        font(14.),
-                        Text::new(format!(
-                            "{}{}{}",
-                            name,
-                            if artifacts {
-                                " (Artifact) " /* 🗑️ */
-                            } else {
-                                " "
-                            },
-                            kondo_lib::pretty_size(size)
-                        )),
-                        ThemedText,
-                    )),
-                )
-            })),
+                ))),
+            )),
             Spawn((
                 button(
                     ButtonProps {
@@ -271,11 +335,32 @@ fn select_project_update(
                         ..default()
                     },
                     (),
-                    Spawn((font(16.), Text::new("Delete Artifacts"), ThemedText)),
+                    Spawn((
+                        // font(16.),
+                        Text::new("Delete Artifacts"),
+                        ThemedText,
+                    )),
                 ),
-                observe(|_: On<Activate>| {
-                    println!("Clean artifacts");
-                }),
+                observe(
+                    move |_: On<Activate>, mut pl: ResMut<ProjectList>, mut c: Commands| {
+                        let path = path.clone();
+
+                        let proj = pl.0.iter_mut().find(|p| p.kproj.path == path);
+
+                        if let Some(proj) = proj {
+                            // println!("Clean artifacts");
+                            proj.status = ProjectListEntryStatus::Cleaning;
+                        }
+
+                        let thread_pool = AsyncComputeTaskPool::get();
+                        let task = thread_pool.spawn(async move {
+                            std::thread::sleep_ms(2000);
+                            path
+                        });
+
+                        c.spawn(CleanTask(task));
+                    },
+                ),
             )),
         )),
     ));
@@ -323,11 +408,27 @@ fn discover_projects<'a>(
         .filter_map(Result::ok)
 }
 
-fn process_new_projects(tc: NonSend<BackgroundThreadCommunication>, mut pl: ResMut<ProjectList>) {
+fn process_new_projects(
+    tc: NonSend<BackgroundThreadCommunication>,
+    mut pl: ResMut<ProjectList>,
+    sdl: Query<Entity, With<ScanningDirsListTag>>,
+    mut c: Commands,
+) {
     while let Ok(msg) = tc.recv.try_recv() {
         match msg {
-            BackgroundThreadMsg::ScanningStarted => {
+            BackgroundThreadMsg::ScanningStarted(dirs) => {
                 pl.clear();
+
+                if let Some(sdl) = sdl.iter().next() {
+                    c.entity(sdl).despawn_children();
+                    for dir in dirs {
+                        c.spawn((
+                            Text::new(dir.to_string_lossy().to_owned()),
+                            ThemedText,
+                            ChildOf(sdl),
+                        ));
+                    }
+                }
             }
             BackgroundThreadMsg::PLE(ple) => {
                 pl.push(ple);
@@ -346,7 +447,7 @@ fn select_directory(_: On<Activate>, tc: NonSend<BackgroundThreadCommunication>)
         };
 
         if main_thread_send
-            .send(BackgroundThreadMsg::ScanningStarted)
+            .send(BackgroundThreadMsg::ScanningStarted(dirs.clone()))
             .is_err()
         {
             return;
@@ -355,6 +456,7 @@ fn select_directory(_: On<Activate>, tc: NonSend<BackgroundThreadCommunication>)
         let (raw_proj_send, raw_proj_recv) = std::sync::mpsc::channel();
 
         std::thread::spawn(move || {
+            info!("Searching {:?}", &dirs);
             for raw_proj in discover_projects(&dirs) {
                 if raw_proj_send.send(raw_proj).is_err() {
                     return;
@@ -366,6 +468,7 @@ fn select_directory(_: On<Activate>, tc: NonSend<BackgroundThreadCommunication>)
             let proj_entry = ProjectListEntry {
                 size: raw_proj.size(SCAN_OPTIONS),
                 kproj: raw_proj,
+                status: ProjectListEntryStatus::Uncleaned,
             };
 
             if main_thread_send
@@ -437,6 +540,12 @@ fn spawn_root(_: &mut Commands) -> impl Bundle {
 }
 
 #[derive(Component)]
+struct LeftSideTag;
+
+#[derive(Component)]
+struct ScanningDirsListTag;
+
+#[derive(Component)]
 struct ProjectListTag;
 
 #[derive(Component)]
@@ -449,6 +558,14 @@ struct CentralUIAreaTag;
 struct ProjectListEntry {
     kproj: kondo_lib::Project,
     size: u64,
+    status: ProjectListEntryStatus,
+}
+
+#[derive(Clone)]
+enum ProjectListEntryStatus {
+    Uncleaned,
+    Cleaning,
+    Cleaned,
 }
 
 fn build_project_list_entry(ple: ProjectListEntry) -> impl Bundle {
@@ -459,10 +576,15 @@ fn build_project_list_entry(ple: ProjectListEntry) -> impl Bundle {
         .map(|n| n.to_string_lossy())
         .unwrap_or_else(|| proj.name());
     let text = format!(
-        "{} ({}) {}",
+        "{} ({}) {} {}",
         display_name,
         proj.type_name(),
         kondo_lib::pretty_size(ple.size),
+        match ple.status {
+            ProjectListEntryStatus::Uncleaned => "Uncleaned",
+            ProjectListEntryStatus::Cleaning => "Cleaning",
+            ProjectListEntryStatus::Cleaned => "Cleaned",
+        }
     );
 
     (
@@ -501,6 +623,7 @@ pub fn button_left<
             align_items: AlignItems::Center,
             padding: UiRect::axes(Val::Px(8.0), Val::Px(4.)),
             flex_grow: 1.0,
+            border_radius: props.corners.to_border_radius(4.0),
             ..Default::default()
         },
         bevy::ui_widgets::Button,
@@ -508,7 +631,6 @@ pub fn button_left<
         bevy::picking::hover::Hovered::default(),
         bevy::feathers::cursor::EntityCursor::System(bevy::window::SystemCursorIcon::Pointer),
         bevy::input_focus::tab_navigation::TabIndex(0),
-        props.corners.to_border_radius(4.0),
         ThemeBackgroundColor(tokens::BUTTON_BG),
         bevy::feathers::theme::ThemeFontColor(tokens::BUTTON_TEXT),
         bevy::feathers::font_styles::InheritableFont {
