@@ -47,11 +47,6 @@ pub(super) fn game_plugin(app: &mut App) {
 
     app.insert_resource(UiTheme(create_dark_theme()));
 
-    // app.insert_resource(bevy::winit::WinitSettings::desktop_app());
-
-    // app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
-    // app.add_plugins(bevy::dev_tools::frame_time_graph::FrameTimeGraphPlugin);
-
     app.add_systems(Startup, (setup, spawn_project_list).chain());
 
     app.add_systems(
@@ -75,23 +70,32 @@ pub(super) fn game_plugin(app: &mut App) {
 }
 
 #[derive(Component)]
-struct CleanTask(Task<PathBuf>);
+struct CleanTask(Task<kondo_lib::Project>);
 
 fn handle_clean_tasks(
     mut clean_tasks: Query<(Entity, &mut CleanTask)>,
     mut pl: ResMut<ProjectList>,
+    mut sp: ResMut<SelectedProject>,
     mut c: Commands,
 ) {
     for (e, mut task) in &mut clean_tasks {
-        if let Some(mut path) = check_ready(&mut task.0) {
-            let proj = pl.0.iter_mut().find(|p| p.kproj.path == path);
+        if let Some(proj) = check_ready(&mut task.0) {
+            {
+                let proj = pl.0.iter_mut().find(|p| p.kproj.path == proj.path);
 
-            if let Some(proj) = proj {
-                // println!("Clean artifacts");
-                proj.status = ProjectListEntryStatus::Cleaned;
+                if let Some(proj) = proj {
+                    proj.status = ProjectListEntryStatus::Cleaned;
+                    proj.size = 0;
+                }
             }
 
             c.entity(e).despawn();
+
+            if let Some(ple) = &sp.0
+                && ple.kproj.path == proj.path
+            {
+                sp.0 = None;
+            }
         }
     }
 }
@@ -254,7 +258,7 @@ fn select_project_update(
         return;
     };
 
-    let path = ple.kproj.path.clone();
+    let proj = ple.kproj.clone();
 
     let display_name = project_file_name(&ple.kproj);
 
@@ -343,19 +347,23 @@ fn select_project_update(
                 ),
                 observe(
                     move |_: On<Activate>, mut pl: ResMut<ProjectList>, mut c: Commands| {
-                        let path = path.clone();
+                        let proj = proj.clone();
 
-                        let proj = pl.0.iter_mut().find(|p| p.kproj.path == path);
+                        let ple = pl.0.iter_mut().find(|p| p.kproj.path == proj.path);
 
-                        if let Some(proj) = proj {
-                            // println!("Clean artifacts");
-                            proj.status = ProjectListEntryStatus::Cleaning;
+                        if let Some(ple) = ple {
+                            ple.status = ProjectListEntryStatus::Cleaning;
                         }
 
                         let thread_pool = AsyncComputeTaskPool::get();
                         let task = thread_pool.spawn(async move {
-                            std::thread::sleep_ms(2000);
-                            path
+                            let start = std::time::Instant::now();
+                            proj.clean();
+                            let elapsed = start.elapsed();
+
+                            info!("Cleaned {:?} in {}ms", &proj, elapsed.as_millis());
+
+                            proj
                         });
 
                         c.spawn(CleanTask(task));
@@ -581,7 +589,7 @@ fn build_project_list_entry(ple: ProjectListEntry) -> impl Bundle {
         proj.type_name(),
         kondo_lib::pretty_size(ple.size),
         match ple.status {
-            ProjectListEntryStatus::Uncleaned => "Uncleaned",
+            ProjectListEntryStatus::Uncleaned => "",
             ProjectListEntryStatus::Cleaning => "Cleaning",
             ProjectListEntryStatus::Cleaned => "Cleaned",
         }

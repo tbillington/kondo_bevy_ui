@@ -36,8 +36,10 @@ codegen-units = 1
 
 [profile.release]
 codegen-units = 1
-lto = true
-debug = "line-tables-only"
+lto = "thin"
+debug = false # "line-tables-only"
+panic = "abort"
+strip = true
 
 [lints.clippy]
 type-complexity = "allow"
